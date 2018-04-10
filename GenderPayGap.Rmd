@@ -1,0 +1,517 @@
+---
+title: "Untitled"
+author: "Jonathan Bourne"
+date: "7 April 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+Code to provide a quick analysis of the gender paygap data
+
+
+Where is the glass ceiling thinnest?
+
+Which industries have the most equal balance between men and women at all levels
+
+Which industries are most/least gendered what does this mean for the pay difference?
+
+https://www.ons.gov.uk/employmentandlabourmarket/peopleinwork/employmentandemployeetypes/bulletins/uklabourmarket/march2018
+ 32.25 milllion people working in the UK
+
+```{r}
+basewd <- "/home/jonno/GenderPaygap"
+
+packages <- c("tidyverse", "readr", "readxl","zoo", "Rtsne", "caret", "ranger" )
+
+new.packages <- packages[!(packages %in% installed.packages()[,"Package"])]
+#If packages not installed on computer install them
+if(length(new.packages)) install.packages(new.packages)
+
+
+#Load all packages ready for use
+lapply(packages, library, character.only = TRUE)
+
+
+
+```
+
+
+#Load data
+
+```{r}
+setwd(basewd)
+PayData <- read_csv("UK Gender Pay Gap Data - 2017 to 2018.csv") %>%
+  mutate(SicCodes =  gsub("\r|\n", "",SicCodes))
+
+CompSize <- PayData %>%
+  group_by(EmployerSize) %>%
+  summarise(SizeCounts = n()) %>%
+  mutate(AvSize = c(2999.5, 45000, 374.5, 749.5, 12499.5, 225, 225))
+
+PayData <- left_join(PayData, select(CompSize, EmployerSize, AvSize))
+
+
+SICcodes <- read_csv("SIC07_CH_condensed_list_en.csv")
+
+SIC2 <-read_excel("sic2007summaryofstructurtcm6.xls") %>%
+  bind_rows(.,
+data_frame(SECTION = "P", X__1 = "EDUCATION",  Division = "1", X__2 = "Education", Group = "1", X__3 = "Trust")
+)
+
+SIC2[1,] <- "zzz"
+
+SIC3 <- SIC2
+
+SIC2 <- SIC2%>%
+  mutate_all(na.locf)
+
+```
+
+
+```{r}
+
+
+PayData %>%
+  ggplot(aes(x= DiffMeanHourlyPercent)) +geom_density() +
+  coord_cartesian(x= c(-50,100)) + 
+  ggtitle("Density plot of mean hourly percent difference") 
+
+
+PayData %>%
+  ggplot(aes(x= EmployerSize, y = DiffMeanHourlyPercent))+ geom_boxplot()
+
+#No real difference by size
+PayData %>%
+  group_by(EmployerSize) %>%
+  summarise(mean = mean(DiffMeanHourlyPercent))
+
+```
+
+
+#Split by SIC code
+
+
+```{r}
+
+PayData$SicCodes
+
+#Create 1 hot vector encoding for expertise
+Number_of_codes<- PayData$SicCodes %>%
+  str_split(., ",") %>% 
+  unlist %>% 
+  trimws %>%
+  as.integer %>%
+  as_tibble %>%
+  group_by(value) %>%
+  summarise(counts = n())
+
+Area <- Number_of_codes$value %>% unique()
+ 
+Area <- Area %>% map(~{
+  data_frame(test = grepl(paste0("(^|,)",.x,"($|,)"), PayData$SicCodes))}) %>% #paste0("(^|,)",.x,"($|,)")
+  bind_cols() %>%
+  setNames(make.names(Area)) 
+
+BroadCats <- SIC3 %>% 
+  mutate(X__1 = na.locf(X__1)) %>%
+  filter(!is.na(X__2))
+
+
+SICPay<- Area %>%
+  bind_cols(select(PayData, CompanyNumber),.) %>%
+  gather(., key = SicCodesTidy, value = value, -CompanyNumber) %>%
+  filter(value==1) %>%
+  select(-value) %>%
+  filter(!is.na(CompanyNumber)) %>%
+  left_join(., PayData, "CompanyNumber") %>%
+  group_by(CompanyNumber) %>% #just make sure everyone appears the correct amount of times
+  mutate(SicCodesTidy = gsub("X", "", SicCodesTidy) %>% as.integer,
+         TotCodes = str_count(SicCodes, ",")+1,
+         TotOccs = n()) %>%
+  ungroup %>%
+  #add in sector names
+  mutate(chars = substr(SicCodesTidy, start = 1, stop = 2)) %>%
+  left_join(select(BroadCats, SECTION:X__2), by=c("chars"="Division")) %>%
+  group_by(X__2) %>%
+  mutate(MeanMeanSECT = mean(DiffMeanHourlyPercent),
+         MeanMedianSECT = median(DiffMedianHourlyPercent)) %>%
+  ungroup %>%
+  mutate(GenderRatio = (FemaleLowerQuartile+  FemaleLowerMiddleQuartile+ FemaleUpperMiddleQuartile+ FemaleTopQuartile)/4)
+  
+
+
+test <- SICPay %>% 
+  group_by(X__2) %>%
+  summarise(MeanMeanSECT = first(MeanMeanSECT),
+            MeanMedianSECT = first(MeanMedianSECT),
+            counts = n(),
+            chars = first(chars))
+
+test2 <- SICPay %>% 
+  group_by(X__1) %>%
+  summarise(MeanMeanSECT = first(MeanMeanSECT),
+            MeanMedianSECT = first(MeanMedianSECT),
+            counts = n(),
+            chars = first(chars))
+
+```
+
+
+```{r}
+test2 <- SICPay %>%
+  group_by(SicCodesTidy) %>%
+  summarise(counts = n(),
+            mean = mean(DiffMeanHourlyPercent))
+
+#most skewed towards women
+SICcodes%>% filter(`SIC Code` == 32110)
+
+#second most skewed towards men
+SICcodes%>% filter(`SIC Code` == 25720 )
+
+
+wtf <- SICPay %>%
+  filter(SicCodesTidy==47730)
+SICcodes%>% filter(`SIC Code` == 47730)
+
+BroadCats <- SIC3 %>% 
+  mutate(X__1 = na.locf(X__1)) %>%
+  filter(!is.na(X__2))
+
+
+test4 <- SICPay %>%
+  mutate(chars = substr(SicCodesTidy, start = 1, stop = 2)) %>%
+  left_join(BroadCats, by=c("chars"="Division")) 
+
+
+
+test4 %>%
+  ggplot(aes(x = fct_reorder(chars, DiffMeanHourlyPercent, fun = median), y = DiffMeanHourlyPercent )) +
+  geom_boxplot() +
+  coord_cartesian(y = c(-25,50)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+test4 %>%
+  ggplot(aes(x = fct_reorder(X__1, DiffMeanHourlyPercent, fun = median), y = DiffMeanHourlyPercent )) +
+  geom_boxplot() +
+  coord_cartesian(y = c(-25,50)) 
+
++
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+test5 <- test4 %>%
+  group_by(chars) %>%
+  summarise(DiffMeanHourlyPercent = mean(DiffMeanHourlyPercent),
+            counts = n(),
+            )
+
+```
+
+
+
+```{r}
+#Convert to matrix for TSNE calulation
+TSNEmat <-SICPay %>%
+  select(MaleLowerQuartile:FemaleTopQuartile) %>%   
+  #select(DiffMeanHourlyPercent:FemaleTopQuartile) %>% 
+  as.matrix()
+
+#Some elements are duplicated these need to be removed
+TSNEdups <- duplicated(TSNEmat)
+sum(TSNEdups)
+
+set.seed(1233)
+#Create TSNE embeddings
+TsneOut <-TSNEmat[!TSNEdups,] %>%  
+  Rtsne(verbose = TRUE)
+
+tsne_plot <- data.frame(x = TsneOut$Y[,1], 
+                        y = TsneOut$Y[,2], 
+                        Class =SICPay$X__1[!TSNEdups],
+                        rank = percent_rank(SICPay$DiffMedianHourlyPercent)[!TSNEdups]) %>%
+  mutate(ClassNum = as.factor(Class) %>% as.integer %>% as.character)
+
+ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color= rank>0.5))
+
+tsne_plot %>%
+  group_by(Class) %>%
+  summarise(ClassNum = first(ClassNum))
+
+```
+
+```{r}
+#Convert to matrix for TSNE calulation
+TSNEmat2 <-SICPay %>%
+  #select(MaleLowerQuartile:FemaleTopQuartile) %>%   
+  select(DiffMeanHourlyPercent:FemaleTopQuartile) %>% 
+  as.matrix()
+
+#Some elements are duplicated these need to be removed
+TSNEdups2 <- duplicated(TSNEmat2)
+sum(TSNEdups2)
+
+set.seed(1233)
+#Create TSNE embeddings
+TsneOut2 <-TSNEmat2[!TSNEdups2,] %>%  
+  Rtsne(verbose = TRUE)
+
+tsne_plot2 <- data.frame(x = TsneOut2$Y[,1], 
+                        y = TsneOut2$Y[,2], 
+                        Class =SICPay$X__1[!TSNEdups2],
+                        rank = percent_rank(SICPay$DiffMedianHourlyPercent)[!TSNEdups2]) %>%
+  mutate(ClassNum = as.factor(Class) %>% as.integer %>% as.character)
+
+ggplot(tsne_plot2) + 
+  geom_point(aes(x=x, y=y, color=ClassNum))
+
+tsne_plot %>%
+  group_by(Class) %>%
+  summarise(ClassNum = first(ClassNum))
+```
+
+
+
+```{r}
+
+dataset <- SICPay %>%
+  mutate(target = percent_rank(DiffMedianHourlyPercent)) %>%
+  select(target, MaleLowerQuartile:FemaleTopQuartile)
+
+dataset <- dataset[!grepl("Female", names(dataset))]
+
+set.seed(192)
+trainset <- createDataPartition(dataset$target, p = .75, list = FALSE)
+
+
+rf_default <- train(y = as.factor(dataset$target[trainset]>0.5), x= dataset[trainset,-1], 
+                  method="glm", 
+                  family="binomial")
+
+
+lm_default <- train(y = dataset$target[trainset], x= dataset[trainset,-1], 
+                  method="lm")
+
+
+dataset2 <- dataset %>%
+  mutate(target = (target>0.5)*1) %>%
+  as.matrix 
+
+rf_ranger_default <- dataset2 %>%
+  ranger(data = ., dependent.variable.name = "target", 
+                              classification = TRUE)
+
+
+Outcomes <- predict(rf_ranger_default, data = dataset2[-trainset,], type = "response") 
+
+test <- Outcomes$predictions
+confusionMatrix(test, dataset2[-trainset, 1])
+
+
+
+Outcomes2 <- predict(rf_default, newdata = dataset[-trainset,])
+confusionMatrix(Outcomes2, dataset$target[-trainset]>0.5)
+
+summary(rf_default)
+
+Outcomes2 <- predict(lm_default, newdata = dataset[-trainset,])
+postResample(Outcomes2, dataset$target[-trainset])
+summary(lm_default)
+
+```
+
+#Promotion Bias
+
+This looks at how the gender balance changes between the quartiles
+
+```{r}
+PBias <- PayData %>%
+  mutate(ML1 = (MaleLowerMiddleQuartile-MaleLowerQuartile)/MaleLowerMiddleQuartile,
+         ML2 = (MaleUpperMiddleQuartile-MaleLowerMiddleQuartile)/MaleUpperMiddleQuartile,
+         ML3 = (MaleTopQuartile-MaleUpperMiddleQuartile)/MaleTopQuartile,
+         FL1 = (FemaleLowerMiddleQuartile-FemaleLowerQuartile)/FemaleLowerMiddleQuartile,
+         FL2 = (FemaleUpperMiddleQuartile-FemaleLowerMiddleQuartile)/FemaleUpperMiddleQuartile,
+         FL3 = (FemaleTopQuartile-FemaleUpperMiddleQuartile)/FemaleTopQuartile,
+         # ML1 = ifelse(is.infinite(ML1), 1, ML1),
+         # ML2 = ifelse(is.infinite(ML2),1, ML2),
+         # ML3 = ifelse(is.infinite(ML3),1, ML3),
+         # FL1 = ifelse(is.infinite(FL1), 1, FL1),
+         # FL2 = ifelse(is.infinite(FL2),1, FL2),
+         # FL3 = ifelse(is.infinite(FL3),1, FL3),
+         MBias = (ML1+ML2+ML3)/3,
+         FBias = (FL1+FL2+FL3)/3)
+
+
+mean(PBias2$MBias, na.rm = T)
+weighted.mean(PBias2$MBias, PBias2$AvSize, na.rm = T)
+
+mean(PBias2$FBias, na.rm = T)
+weighted.mean(PBias2$FBias, PBias2$AvSize, na.rm = T)
+
+
+t.test(PBias$MBias, PBias$FBias, paired = T)
+
+PBias %>%
+  select(MBias, FBias, AvSize) %>%
+  gather(., key = key, value = value, -AvSize) %>%
+  ggplot(aes(x= value, colour = key)) + geom_density()+
+  coord_cartesian(x=c(-1.5,0.5)) +
+  labs(x = "Mean promotion bias", title = "Internal Promotion bias")
+
+PBias %>%
+  select(MBias, FBias) %>%
+  ggplot(aes(x= MBias, y = FBias)) + geom_point()+
+  coord_cartesian(x=c(-1.5,0.5), y=c(-1.5,0.5))
+
+PBias %>%
+  select(ML1:FL3) %>%
+  gather %>%
+  ggplot(aes(colour= key, x = value)) + geom_density() +
+   coord_cartesian(x=c(-1.5,0.5))
+
+
+#The bias for going from Q4 to Q3 shows that
+
+PBias %>%
+  select(ML1:FL3) %>%
+  gather %>%
+  group_by(key) %>%
+  summarise(mean = mean(value, na.rm = T))
+
+#percent of workforce covered
+sum(PBias$AvSize)/32250000
+
+TotalLength <- 100000
+
+
+
+
+WeightedOut <- c("ML1", "ML2","ML3","FL1","FL2","FL3","MBias","FBias" ) %>%
+ map(~{
+   print(.x)
+   target <- select(PBias, .x)
+test <-  map2_df(.x = 1:nrow(PBias), .y =PBias$AvSize/sum(PBias$AvSize), ~{
+
+  z<- data.frame(value = rep(target[.x,1], times = floor(.y*TotalLength)
+                             ) %>% unlist
+                 ) %>%
+      set_names(names(target))
+    
+    return(z)
+  }) 
+print(class(test))
+return(test)
+
+})  %>%
+ bind_cols()
+
+
+
+ WeightedOut %>%
+  select(MBias, FBias) %>%
+  gather %>% 
+    ggplot(aes(colour= key, x = value)) + geom_density() +
+   coord_cartesian(x=c(-1.5,0.8))
+
+WeightedOut2  %>%
+  gather %>%
+  group_by(key) %>%
+  summarise(mean = mean(value, na.rm = T))
+
+
+ WeightedOut %>%
+  select(ML1:FL3) %>%
+  gather %>% 
+    ggplot(aes(colour= key, x = value)) + geom_density() +
+   coord_cartesian(x=c(-1.5,0.8))
+
+
+ table(PBias$MBias>0, PBias$FBias>0)
+ 
+ test <- PBias %>%
+   filter(MBias>0, FBias>0)
+ 
+```
+
+
+
+
+```{r}
+PBias2 <- PayData %>%
+  mutate(ML1 = (MaleLowerMiddleQuartile-MaleLowerQuartile),
+         ML2 = (MaleUpperMiddleQuartile-MaleLowerMiddleQuartile),
+         ML3 = (MaleTopQuartile-MaleUpperMiddleQuartile),
+         Bias = (ML1+ML2+ML3),
+         MBias = Bias/(MaleLowerMiddleQuartile+MaleUpperMiddleQuartile+MaleTopQuartile+1),
+         FBias =-Bias/(FemaleLowerMiddleQuartile+FemaleUpperMiddleQuartile+FemaleTopQuartile+1)) 
+
+
+
+PBias2 %>%
+  ggplot(aes(x= DiffMedianHourlyPercent, y = Bias)) +
+  geom_point()
+
+
+cor(PBias2$DiffMedianHourlyPercent, PBias2$Bias)
+
+WeightedOut2 <- c("Bias","MBias", "FBias" ) %>%
+ map(~{
+   print(.x)
+   target <- select(PBias2, .x)
+test <-  map2_df(.x = 1:nrow(PBias2), .y =PBias2$AvSize/sum(PBias2$AvSize), ~{
+
+  z<- data.frame(value = rep(target[.x,1], times = floor(.y*TotalLength)
+                             ) %>% unlist
+                 ) %>%
+      set_names(names(target))
+    
+    return(z)
+  }) 
+print(class(test))
+return(test)
+
+})  %>%
+ bind_cols()
+
+
+WeightedOut2 %>%
+  select(Bias) %>%
+    ggplot(aes(x = Bias)) + geom_density()
+
+
+ WeightedOut2 %>%
+  select(MBias, FBias) %>%
+  gather %>% 
+    ggplot(aes(colour= key, x = value)) + geom_density() +
+   coord_cartesian(x=c(-1.5,0.8))
+
+```
+
+
+
+```{r}
+
+dataset <- PBias2 %>%
+  mutate(target = percent_rank(DiffMedianHourlyPercent)) %>%
+  select(target, MBias, FBias)
+
+set.seed(192)
+trainset <- createDataPartition(dataset$target, p = .75, list = FALSE)
+
+
+
+lm_default <- train(y = dataset$target[trainset], x= dataset[trainset,-1], 
+                  method="lm")
+
+summary(lm_default)
+
+Outcomes2 <- predict(lm_default, newdata = dataset[-trainset,])
+postResample(Outcomes2, dataset$target[-trainset])
+
+```
+
