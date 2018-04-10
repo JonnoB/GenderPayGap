@@ -21,7 +21,7 @@ https://www.ons.gov.uk/employmentandlabourmarket/peopleinwork/employmentandemplo
  32.25 milllion people working in the UK
 
 ```{r}
-basewd <- "/home/jonno/GenderPaygap"
+basewd <- "/home/jonno/GenderPaygap2"
 
 packages <- c("tidyverse", "readr", "readxl","zoo", "Rtsne", "caret", "ranger" )
 
@@ -331,27 +331,47 @@ This looks at how the gender balance changes between the quartiles
 
 ```{r}
 PBias <- PayData %>%
-  mutate(ML1 = (MaleLowerMiddleQuartile-MaleLowerQuartile)/MaleLowerMiddleQuartile,
-         ML2 = (MaleUpperMiddleQuartile-MaleLowerMiddleQuartile)/MaleUpperMiddleQuartile,
-         ML3 = (MaleTopQuartile-MaleUpperMiddleQuartile)/MaleTopQuartile,
-         FL1 = (FemaleLowerMiddleQuartile-FemaleLowerQuartile)/FemaleLowerMiddleQuartile,
-         FL2 = (FemaleUpperMiddleQuartile-FemaleLowerMiddleQuartile)/FemaleUpperMiddleQuartile,
-         FL3 = (FemaleTopQuartile-FemaleUpperMiddleQuartile)/FemaleTopQuartile,
-         # ML1 = ifelse(is.infinite(ML1), 1, ML1),
-         # ML2 = ifelse(is.infinite(ML2),1, ML2),
-         # ML3 = ifelse(is.infinite(ML3),1, ML3),
-         # FL1 = ifelse(is.infinite(FL1), 1, FL1),
-         # FL2 = ifelse(is.infinite(FL2),1, FL2),
-         # FL3 = ifelse(is.infinite(FL3),1, FL3),
+  mutate(ML1 = (MaleLowerMiddleQuartile-MaleLowerQuartile)/(MaleLowerQuartile+1),
+         ML2 = (MaleUpperMiddleQuartile-MaleLowerMiddleQuartile)/(MaleLowerMiddleQuartile+1),
+         ML3 = (MaleTopQuartile-MaleUpperMiddleQuartile)/(MaleUpperMiddleQuartile+1),
+         FL1 = (FemaleLowerMiddleQuartile-FemaleLowerQuartile)/(FemaleLowerQuartile+1),
+         FL2 = (FemaleUpperMiddleQuartile-FemaleLowerMiddleQuartile)/(FemaleLowerMiddleQuartile+1),
+         FL3 = (FemaleTopQuartile-FemaleUpperMiddleQuartile)/(FemaleUpperMiddleQuartile+1),
          MBias = (ML1+ML2+ML3)/3,
-         FBias = (FL1+FL2+FL3)/3)
+         FBias = (FL1+FL2+FL3)/3,
+         # RatQ2 = (MaleLowerMiddleQuartile*(1-MaleLowerQuartile)+1)/(MaleLowerQuartile*(1-MaleLowerMiddleQuartile)+1),
+         # RatQ3 = (MaleUpperMiddleQuartile*(1-MaleLowerMiddleQuartile)+1)/(MaleLowerMiddleQuartile*(1-MaleUpperMiddleQuartile)+1),
+         # RatQ4 = (MaleTopQuartile*(1-MaleUpperMiddleQuartile)+1)/(MaleUpperMiddleQuartile*(1-MaleTopQuartile)+1),
+         RatQ2 = (MaleLowerMiddleQuartile*(1-MaleLowerQuartile))/(MaleLowerQuartile*(1-MaleLowerMiddleQuartile)),
+         RatQ3 = (MaleUpperMiddleQuartile*(1-MaleLowerMiddleQuartile))/(MaleLowerMiddleQuartile*(1-MaleUpperMiddleQuartile)),
+         RatQ4 = (MaleTopQuartile*(1-MaleUpperMiddleQuartile))/(MaleUpperMiddleQuartile*(1-MaleTopQuartile)),
+         MeanRat = (RatQ2+RatQ3+RatQ4)/3,
+         Percmale = (MaleLowerQuartile + MaleLowerMiddleQuartile + MaleUpperMiddleQuartile + MaleTopQuartile)/4)
 
 
-mean(PBias2$MBias, na.rm = T)
-weighted.mean(PBias2$MBias, PBias2$AvSize, na.rm = T)
 
-mean(PBias2$FBias, na.rm = T)
-weighted.mean(PBias2$FBias, PBias2$AvSize, na.rm = T)
+MaleCenter <- 1:nrow(PBias) %>%
+  map_dbl(~{
+    PBias[.x,] %>% select(MaleLowerQuartile, MaleLowerMiddleQuartile, MaleUpperMiddleQuartile, MaleTopQuartile) %>%t %>%
+      weighted.mean(1:4, .)
+  })
+
+FemaleCenter <- 1:nrow(PBias) %>%
+  map_dbl(~{
+    PBias[.x,] %>% select(FemaleLowerQuartile, FemaleLowerMiddleQuartile, FemaleUpperMiddleQuartile, FemaleTopQuartile) %>%t %>%
+      weighted.mean(1:4, .)
+  })
+
+
+PBias <- PBias %>%
+  mutate(MaleCenter = MaleCenter,
+         FemaleCenter = FemaleCenter)
+
+mean(PBias$MBias, na.rm = T)
+weighted.mean(PBias$MBias, PBias$AvSize, na.rm = T)
+
+mean(PBias$FBias, na.rm = T)
+weighted.mean(PBias$FBias, PBias$AvSize, na.rm = T)
 
 
 t.test(PBias$MBias, PBias$FBias, paired = T)
@@ -360,15 +380,15 @@ PBias %>%
   select(MBias, FBias, AvSize) %>%
   gather(., key = key, value = value, -AvSize) %>%
   ggplot(aes(x= value, colour = key)) + geom_density()+
-  coord_cartesian(x=c(-1.5,0.5)) +
+  coord_cartesian(x=c(-0.7,0.8)) +
   labs(x = "Mean promotion bias", title = "Internal Promotion bias")
 
 PBias %>%
   select(MBias, FBias) %>%
   ggplot(aes(x= MBias, y = FBias)) + geom_point()+
-  coord_cartesian(x=c(-1.5,0.5), y=c(-1.5,0.5))
+  coord_cartesian(x=c(-0.5,1.5), y=c(-0.7,1.5))
 
-PBias %>%
+PBias %>%  coord_cartesian(x=c(0.9,1.1))
   select(ML1:FL3) %>%
   gather %>%
   ggplot(aes(colour= key, x = value)) + geom_density() +
@@ -381,17 +401,19 @@ PBias %>%
   select(ML1:FL3) %>%
   gather %>%
   group_by(key) %>%
-  summarise(mean = mean(value, na.rm = T))
+  summarise(mean = mean(value, na.rm = T),
+            median = median(value, na.rm = T))
 
 #percent of workforce covered
 sum(PBias$AvSize)/32250000
 
-TotalLength <- 100000
+TotalLength <- 200000
 
+#creates a vector that replicates a companies bias a number of time proportional to its weight in society
 
-
-
-WeightedOut <- c("ML1", "ML2","ML3","FL1","FL2","FL3","MBias","FBias" ) %>%
+setwd(basewd)
+if(!file.exists("WeightedData.rmd")){
+WeightedOut <- c("CompanyNumber","ML1", "ML2","ML3","FL1","FL2","FL3","MBias","FBias", "MeanRat", "MaleCenter", "FemaleCenter" )  %>% 
  map(~{
    print(.x)
    target <- select(PBias, .x)
@@ -410,95 +432,121 @@ return(test)
 })  %>%
  bind_cols()
 
-
+saveRDS(WeightedOut , "WeightedData.rmd")
+} else{
+  
+  readRDS("WeightedData.rmd")
+}
 
  WeightedOut %>%
   select(MBias, FBias) %>%
   gather %>% 
     ggplot(aes(colour= key, x = value)) + geom_density() +
-   coord_cartesian(x=c(-1.5,0.8))
+   coord_cartesian(x=c(-0.6,0.8))
 
-WeightedOut2  %>%
+WeightedOut  %>%
   gather %>%
   group_by(key) %>%
-  summarise(mean = mean(value, na.rm = T))
-
+  summarise(mean = mean(value, na.rm = T),
+            median = median(value, na.rm = T))
 
  WeightedOut %>%
   select(ML1:FL3) %>%
   gather %>% 
     ggplot(aes(colour= key, x = value)) + geom_density() +
    coord_cartesian(x=c(-1.5,0.8))
-
-
- table(PBias$MBias>0, PBias$FBias>0)
- 
- test <- PBias %>%
-   filter(MBias>0, FBias>0)
  
 ```
 
 
+#test bias
+```{r}
+x1<- seq(1,100,1)
+x2<- seq(100,0.1,-1)
+
+x1<- seq(.1,1,.01)
+x2<- seq(1,0.1,-.01)
+
+x1<- c(0,0,0)
+x2<- c()
+
+Out <-(x2*(1-x1))/(x1*(1-x2))
+plot(Out[80:100])
+
+PBias2 <- PayData %>%
+  mutate(Q1 =MaleLowerQuartile/100,
+         Q2 = MaleLowerMiddleQuartile/100,
+         Q3 = MaleUpperMiddleQuartile/100,
+         Q4 = MaleTopQuartile,
+         # RatQ2 = (MaleLowerMiddleQuartile*(1-MaleLowerQuartile)+1)/(MaleLowerQuartile*(1-MaleLowerMiddleQuartile)+1),
+         # RatQ3 = (MaleUpperMiddleQuartile*(1-MaleLowerMiddleQuartile)+1)/(MaleLowerMiddleQuartile*(1-MaleUpperMiddleQuartile)+1),
+         # RatQ4 = (MaleTopQuartile*(1-MaleUpperMiddleQuartile)+1)/(MaleUpperMiddleQuartile*(1-MaleTopQuartile)+1),
+         RatQ2 = (Q2*(1-Q1)+1)/(Q1*(1-Q2)+1),
+         RatQ3 = (Q3*(1-Q2)+1)/(Q2*(1-Q3)+1),
+         RatQ4 = (Q4*(1-Q3)+1)/(Q3*(1-Q4)+1),
+         RatioQ2 = (Q2*(1-Q1))/(Q1*(1-Q2)),
+         RatioQ3 = (Q3*(1-Q2))/(Q2*(1-Q3)),
+         RatioQ4 = (Q4*(1-Q3))/(Q3*(1-Q4)),
+         MeanRat = (RatQ2+RatQ3+RatQ4)/3,
+         MeanRat2 = (RatioQ2+RatioQ3+RatioQ4),
+         Percmale = (MaleLowerQuartile + MaleLowerMiddleQuartile + MaleUpperMiddleQuartile + MaleTopQuartile)/4) %>%
+  select(RatQ2:MeanRat2) %>%
+    filter(MeanRat2<25, MeanRat2>-25) 
+
+
+PBias2  %>%
+    filter(MeanRat2<25, MeanRat2>-25) %>% 
+  ggplot(aes(x= MeanRat2)) +geom_density()
+
+
+
+median(PBias2$MeanRat2, na.rm = T)
+
+```
+
 
 
 ```{r}
-PBias2 <- PayData %>%
-  mutate(ML1 = (MaleLowerMiddleQuartile-MaleLowerQuartile),
-         ML2 = (MaleUpperMiddleQuartile-MaleLowerMiddleQuartile),
-         ML3 = (MaleTopQuartile-MaleUpperMiddleQuartile),
-         Bias = (ML1+ML2+ML3),
-         MBias = Bias/(MaleLowerMiddleQuartile+MaleUpperMiddleQuartile+MaleTopQuartile+1),
-         FBias =-Bias/(FemaleLowerMiddleQuartile+FemaleUpperMiddleQuartile+FemaleTopQuartile+1)) 
+
+PBias %>%
+  ggplot(aes(x= MeanRat)) + geom_density()+
+  coord_cartesian(x=c(0.9,1.05))
 
 
+PBias %>%
+  ggplot(aes(x= RatQ2)) + geom_density()+
+  coord_cartesian(x=c(0.94,1.1))
 
-PBias2 %>%
-  ggplot(aes(x= DiffMedianHourlyPercent, y = Bias)) +
+PBias %>%
+  ggplot(aes(x= Maleweight, y = Femaleweight)) +
   geom_point()
 
+cor(PBias$DiffMedianHourlyPercent, PBias$MaleCenter)
 
-cor(PBias2$DiffMedianHourlyPercent, PBias2$Bias)
-
-WeightedOut2 <- c("Bias","MBias", "FBias" ) %>%
- map(~{
-   print(.x)
-   target <- select(PBias2, .x)
-test <-  map2_df(.x = 1:nrow(PBias2), .y =PBias2$AvSize/sum(PBias2$AvSize), ~{
-
-  z<- data.frame(value = rep(target[.x,1], times = floor(.y*TotalLength)
-                             ) %>% unlist
-                 ) %>%
-      set_names(names(target))
-    
-    return(z)
-  }) 
-print(class(test))
-return(test)
-
-})  %>%
- bind_cols()
-
-
-WeightedOut2 %>%
-  select(Bias) %>%
-    ggplot(aes(x = Bias)) + geom_density()
-
-
- WeightedOut2 %>%
-  select(MBias, FBias) %>%
+ WeightedOut%>%
+  select(FemaleCenter, MaleCenter) %>%
   gather %>% 
-    ggplot(aes(colour= key, x = value)) + geom_density() +
-   coord_cartesian(x=c(-1.5,0.8))
+    ggplot(aes(colour= key, x = value)) + geom_density()
 
+ mean(PBias$MaleCenter, na.rm = T)
+weighted.mean(PBias$MaleCenter, PBias$AvSize, na.rm = T)
+
+mean(PBias$FemaleCenter, na.rm = T)
+weighted.mean(PBias$FemaleCenter, PBias$AvSize, na.rm = T)
+
+
+t.test(PBias$MaleCenter, PBias$FemaleCenter)
+ 
 ```
 
 
 
 ```{r}
 
-dataset <- PBias2 %>%
+dataset <- PBias %>%
   mutate(target = percent_rank(DiffMedianHourlyPercent)) %>%
-  select(target, MBias, FBias)
+  select(target, MeanRat, MaleCenter, FemaleCenter) %>%
+  filter(is.finite(MeanRat), is.finite(FemaleCenter))
 
 set.seed(192)
 trainset <- createDataPartition(dataset$target, p = .75, list = FALSE)
@@ -512,6 +560,80 @@ summary(lm_default)
 
 Outcomes2 <- predict(lm_default, newdata = dataset[-trainset,])
 postResample(Outcomes2, dataset$target[-trainset])
+
+```
+
+
+
+```{r}
+
+test <- WeightedOut %>%
+  left_join(select(SICPay, CompanyNumber, SicCodesTidy, X__1, X__2, DiffMedianHourlyPercent, GenderRatio)) %>%
+  as_tibble()%>%
+  filter(is.finite(MeanRat)) %>%
+  filter(!is.na(X__1))
+
+
+test %>%
+  ggplot(aes(x =fct_reorder( X__1, MeanRat), y = MeanRat)) + geom_boxplot() +
+  coord_cartesian(y = c(0.8,1.3))
+
+test2 <- test %>%
+  filter(is.finite(MeanRat)) %>%
+  group_by(X__1) %>%
+    summarise(Rat = median(MeanRat),
+              MaleCenter = median(MaleCenter),
+              FemaleCenter = median(FemaleCenter),
+              DiffMedianHourlyPercent = median(DiffMedianHourlyPercent),
+              counts = n(),
+              GenderRatio = median(GenderRatio)) %>%
+  arrange(Rat)
+
+test2
+
+cor(test2$Rat, test2$MaleCenter)
+cor(test$MeanRat, test$MaleCenter)
+
+cor(test2$Rat, test2$FemaleCenter)
+cor(test$MeanRat, test$FemaleCenter)
+
+cor(test$FemaleCenter, test$MaleCenter)
+
+cor(test2$GenderRatio, test2$Rat)
+cor(test$GenderRatio, test$MeanRat)
+
+cor(test2$GenderRatio, test2$FemaleCenter)
+cor(test$GenderRatio, test$FemaleCenter)
+
+
+
+```
+
+
+
+#Sector Sigmoid fit 
+
+This chunk shows how the relationship between the promotions ratio and the pay gap follows a sigmoid shape.
+
+It shows that if you are in an industry with better promotion prospects you are also in an industry with a smaller pay gap
+
+```{r}
+fit <- nls(y ~ SSlogis(x, Asym, xmid, scal), data = data.frame( x= test2$Rat, y = test2$DiffMedianHourlyPercent) %>% filter(y !=0))
+
+summary(fit)
+
+lines(seq(0.5, 4, length.out = 100), 
+      predict(fit, newdata = data.frame(x = seq(0.5, 4, length.out = 100))))
+
+SigmoidCurve <- data_frame( y = predict(fit, newdata = data.frame(x = seq(1, max(test2$Rat), length.out = 100)))[1:100],
+                   x = seq(1, max(test2$Rat), length.out = 100))
+
+test2 %>%
+  ggplot() +geom_point(aes(x= Rat, y = DiffMedianHourlyPercent)) +
+  geom_line(data = SigmoidCurve, aes(x= x, y = y), colour = "red") +
+  labs(x= "Male Promotion Liklihood", 
+       y ="Percent Difference in Median Hourly Wage", 
+       title = "Sector Relationship Between promotion likelyhood and Pay gap")
 
 ```
 
